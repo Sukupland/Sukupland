@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sukup Land — Private Land Holdings</title>
+  <meta name="description" content="Affordable vacant lots for sale. Cash deals and owner financing available. Sukup Capital Partners, LLC." />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💲</text></svg>" />
+</head>
+<body style="margin:0;padding:0;background:#0d0c08;">
+  <div id="root"></div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+  <script type="text/babel">
+    const { useState, useEffect, useCallback } = React;
+
+    /* ─── CONFIG ─── */
+    const EMPTY_LISTING = {
+      address: "", city: "", county: "", state: "",
+      acreage: "", parcelId: "", purchasePrice: "", askingPrice: "",
+      status: "available", description: "", features: [],
+      dateAcquired: new Date().toISOString().slice(0, 10),
+      sellerFinance: false, sfDown: "", sfMonthly: "", sfTermMonths: "24",
+    };
+
+    const FEATURE_OPTIONS = [
+      "Road Access", "Electric Nearby", "Water Available", "Sewer/Septic Ready",
+      "Level Lot", "Corner Lot", "No HOA", "Fenced",
+      "City Limits", "Owner Financing", "Mobile Home OK", "RV Friendly",
+    ];
+
+    const STATUS_MAP = {
+      available: { label: "For Sale", color: "#3dd68c", bg: "rgba(61,214,140,0.12)" },
+      pending: { label: "Pending", color: "#f0c45a", bg: "rgba(240,196,90,0.12)" },
+      sold: { label: "Sold", color: "#f0997b", bg: "rgba(240,153,123,0.12)" },
+      holding: { label: "Holding", color: "#7b9ef0", bg: "rgba(123,158,240,0.12)" },
+    };
+
+    const ADMIN_KEY = "sukup-admin-auth";
+    const STORAGE_KEY = "sukup-listings-data";
+
+    /* ─── HARDCODED AUTH HASH ─── */
+    /* SHA-256 of "5thAvenue" — password is NEVER stored in localStorage */
+    const ADMIN_HASH = "0bbbad41a65afe638e738d67ce54df047ecd20ede5e3a38355757a4abfa43fbd";
+
+    async function sha256(str) {
+      const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+      return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+    }
+
+    /* ─── HELPERS ─── */
+    function fmt(n) { return Number(n).toLocaleString("en-US", { maximumFractionDigits: 0 }); }
+
+    function loadData() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) return JSON.parse(raw);
+      } catch {}
+      return { listings: [], nextId: 1 };
+    }
+
+    function saveData(data) {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch (e) { console.error("Save failed:", e); }
+    }
+
+    function GoldDivider({ style }) {
+      return (
+        <div style={{ height: 1, background: "linear-gradient(90deg, transparent, var(--gold-dim), var(--gold), var(--gold-dim), transparent)", ...style }} />
+      );
+    }
+
+    /* ─── LISTING CARD ─── */
+    function ListingCard({ listing, onEdit, isPublic }) {
+      const st = STATUS_MAP[listing.status] || STATUS_MAP.available;
+      const profit = listing.askingPrice && listing.purchasePrice
+        ? Number(listing.askingPrice) - Number(listing.purchasePrice) : null;
+
+      return (
+        <div style={{
+          borderRadius: 2, border: "1px solid var(--border)", background: "var(--card)",
+          overflow: "hidden", animation: "fadeIn 0.4s ease",
+        }}>
+          {/* Status badge */}
+          <div style={{ padding: "14px 18px 12px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 10, fontFamily: "var(--mono)", letterSpacing: 3, color: st.color, background: st.bg, padding: "4px 10px", borderRadius: 1 }}>
+              {st.label.toUpperCase()}
+            </span>
+            {!isPublic && onEdit && (
+              <button onClick={() => onEdit(listing)} style={{
+                background: "none", border: "1px solid var(--border)", color: "var(--gold-dim)",
+                fontSize: 11, padding: "4px 12px", borderRadius: 1, cursor: "pointer",
+                fontFamily: "var(--mono)", letterSpacing: 2,
+              }}>EDIT</button>
+            )}
+          </div>
+
+          {/* Details */}
+          <div style={{ padding: "16px 18px" }}>
+            <h3 style={{ margin: "0 0 6px", fontSize: 20, fontWeight: 500, fontFamily: "var(--display)", color: "var(--fg)" }}>
+              {listing.address || "Untitled Parcel"}
+            </h3>
+            <p style={{ margin: "0 0 12px", fontSize: 13, color: "var(--muted)", fontFamily: "var(--mono)", letterSpacing: 1 }}>
+              {[listing.city, listing.county ? listing.county + " Co." : "", listing.state].filter(Boolean).join(", ")}
+              {listing.acreage ? " · " + listing.acreage + " acres" : ""}
+            </p>
+            {listing.parcelId && (
+              <p style={{ margin: "0 0 8px", fontSize: 11, color: "var(--gold-dim)", fontFamily: "var(--mono)", letterSpacing: 2 }}>
+                PARCEL: {listing.parcelId}
+              </p>
+            )}
+            {listing.description && (
+              <p style={{ margin: "0 0 12px", fontSize: 15, color: "var(--muted)", fontFamily: "var(--body)", lineHeight: 1.6 }}>
+                {listing.description}
+              </p>
+            )}
+
+            {/* Features */}
+            {listing.features && listing.features.length > 0 && (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+                {listing.features.map(f => (
+                  <span key={f} style={{
+                    fontSize: 10, fontFamily: "var(--mono)", letterSpacing: 1.5,
+                    padding: "3px 8px", borderRadius: 1, border: "1px solid var(--border)",
+                    color: "var(--gold-dim)", textTransform: "uppercase",
+                  }}>{f}</span>
+                ))}
+              </div>
+            )}
+
+            {/* Pricing */}
+            <div style={{ borderTop: "1px solid var(--border)", paddingTop: 14, display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+              <div>
+                <div style={{ fontSize: 10, fontFamily: "var(--mono)", letterSpacing: 2, color: "var(--muted)", marginBottom: 4 }}>
+                  {listing.sellerFinance ? "OWNER FINANCING" : "ASKING PRICE"}
+                </div>
+                <div style={{ fontSize: 28, fontWeight: 600, fontFamily: "var(--display)", color: "var(--gold)" }}>
+                  ${fmt(listing.askingPrice || 0)}
+                </div>
+                {listing.sellerFinance && listing.sfDown && (
+                  <div style={{ fontSize: 12, color: "var(--muted)", fontFamily: "var(--mono)", marginTop: 4 }}>
+                    ${fmt(listing.sfDown)} down · ${fmt(listing.sfMonthly)}/mo × {listing.sfTermMonths}mo
+                  </div>
+                )}
+              </div>
+              {!isPublic && profit !== null && (
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 10, fontFamily: "var(--mono)", letterSpacing: 2, color: "var(--muted)", marginBottom: 4 }}>PROFIT</div>
+                  <div style={{ fontSize: 20, fontWeight: 600, fontFamily: "var(--mono)", color: profit > 0 ? "#3dd68c" : "#f0997b" }}>
+                    {profit >= 0 ? "+" : ""}${fmt(profit)}
+                  </div>
+                  <div style={{ fontSize: 10, fontFamily: "var(--mono)", color: "var(--muted)", marginTop: 2 }}>
+                    cost: ${fmt(listing.purchasePrice)}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    /* ─── LISTING FORM ─── */
+    function ListingForm({ listing, onSave, onCancel, onDelete }) {
+      const [form, setForm] = useState({ ...listing });
+      const update = (k, v) => setForm({ ...form, [k]: v });
+      const toggleFeature = (f) => {
+        const feats = form.features || [];
+        update("features", feats.includes(f) ? feats.filter(x => x !== f) : [...feats, f]);
+      };
+
+      const labelStyle = { display: "block", fontSize: 10, fontFamily: "var(--mono)", letterSpacing: 2, color: "var(--gold-dim)", marginBottom: 6, textTransform: "uppercase" };
+      const inputStyle = {
+        width: "100%", padding: "10px 12px", borderRadius: 2, border: "1px solid var(--border)",
+        background: "var(--input-bg)", color: "var(--fg)", fontSize: 14, fontFamily: "var(--body)",
+        outline: "none", boxSizing: "border-box",
+      };
+
+      return (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 1000,
+          background: "rgba(0,0,0,0.85)", backdropFilter: "blur(12px)",
+          display: "flex", alignItems: "flex-start", justifyContent: "center",
+          padding: "40px 20px", overflowY: "auto",
+        }}>
+          <div style={{
+            background: "var(--bg)", borderRadius: 2, border: "1px solid var(--border)",
+            width: "100%", maxWidth: 600, boxShadow: "0 32px 100px rgba(0,0,0,0.6)",
+          }}>
+            <div style={{ height: 3, background: "linear-gradient(90deg, transparent, var(--gold), var(--gold-light), var(--gold), transparent)" }} />
+            <div style={{ padding: "28px 24px" }}>
+              <h2 style={{ margin: "0 0 24px", fontSize: 22, fontWeight: 400, fontFamily: "var(--display)", color: "var(--fg)" }}>
+                {form.id ? "Edit Listing" : "New Listing"}
+              </h2>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+                <div style={{ gridColumn: "1/-1" }}>
+                  <label style={labelStyle}>Property Address</label>
+                  <input style={inputStyle} value={form.address} onChange={e => update("address", e.target.value)} placeholder="123 Main St" />
+                </div>
+                <div>
+                  <label style={labelStyle}>City</label>
+                  <input style={inputStyle} value={form.city} onChange={e => update("city", e.target.value)} placeholder="Del Rio" />
+                </div>
+                <div>
+                  <label style={labelStyle}>County</label>
+                  <input style={inputStyle} value={form.county} onChange={e => update("county", e.target.value)} placeholder="Val Verde" />
+                </div>
+                <div>
+                  <label style={labelStyle}>State</label>
+                  <input style={inputStyle} value={form.state} onChange={e => update("state", e.target.value)} placeholder="TX" />
+                </div>
+                <div>
+                  <label style={labelStyle}>Acreage</label>
+                  <input style={inputStyle} type="number" step="0.01" value={form.acreage} onChange={e => update("acreage", e.target.value)} placeholder="0.25" />
+                </div>
+                <div>
+                  <label style={labelStyle}>Parcel ID</label>
+                  <input style={inputStyle} value={form.parcelId} onChange={e => update("parcelId", e.target.value)} placeholder="VVC-12345" />
+                </div>
+                <div>
+                  <label style={labelStyle}>Status</label>
+                  <select style={{ ...inputStyle, appearance: "auto" }} value={form.status} onChange={e => update("status", e.target.value)}>
+                    <option value="available">For Sale</option>
+                    <option value="pending">Pending</option>
+                    <option value="sold">Sold</option>
+                    <option value="holding">Holding</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={labelStyle}>Purchase Price ($)</label>
+                  <input style={inputStyle} type="number" value={form.purchasePrice} onChange={e => update("purchasePrice", e.target.value)} placeholder="500" />
+                </div>
+                <div>
+                  <label style={labelStyle}>Asking Price ($)</label>
+                  <input style={inputStyle} type="number" value={form.askingPrice} onChange={e => update("askingPrice", e.target.value)} placeholder="2500" />
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 16 }}>
+                <label style={labelStyle}>Description</label>
+                <textarea style={{ ...inputStyle, minHeight: 80, resize: "vertical" }} value={form.description} onChange={e => update("description", e.target.value)} placeholder="Describe the parcel..." />
+              </div>
+
+              {/* Owner financing toggle */}
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ ...labelStyle, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}>
+                  <input type="checkbox" checked={form.sellerFinance} onChange={e => update("sellerFinance", e.target.checked)} />
+                  OWNER FINANCING AVAILABLE
+                </label>
+                {form.sellerFinance && (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginTop: 10 }}>
+                    <div>
+                      <label style={labelStyle}>Down Payment ($)</label>
+                      <input style={inputStyle} type="number" value={form.sfDown} onChange={e => update("sfDown", e.target.value)} placeholder="200" />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Monthly ($)</label>
+                      <input style={inputStyle} type="number" value={form.sfMonthly} onChange={e => update("sfMonthly", e.target.value)} placeholder="100" />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Term (months)</label>
+                      <input style={inputStyle} type="number" value={form.sfTermMonths} onChange={e => update("sfTermMonths", e.target.value)} placeholder="24" />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Features */}
+              <div style={{ marginBottom: 24 }}>
+                <label style={labelStyle}>Features</label>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {FEATURE_OPTIONS.map(f => (
+                    <button key={f} onClick={() => toggleFeature(f)} style={{
+                      padding: "5px 10px", borderRadius: 1, fontSize: 11, fontFamily: "var(--mono)", letterSpacing: 1,
+                      border: "1px solid " + ((form.features || []).includes(f) ? "var(--gold)" : "var(--border)"),
+                      background: (form.features || []).includes(f) ? "rgba(201,162,39,0.1)" : "transparent",
+                      color: (form.features || []).includes(f) ? "var(--gold)" : "var(--muted)",
+                      cursor: "pointer",
+                    }}>{f}</button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: 10, justifyContent: "space-between" }}>
+                <div style={{ display: "flex", gap: 10 }}>
+                  {form.id && (
+                    <button onClick={() => { if (confirm("Delete this listing?")) onDelete(form.id); }} style={{
+                      padding: "11px 18px", borderRadius: 2, border: "1px solid #ef4444",
+                      background: "rgba(239,68,68,0.1)", color: "#ef4444", fontSize: 12,
+                      fontFamily: "var(--mono)", letterSpacing: 2, cursor: "pointer",
+                    }}>DELETE</button>
+                  )}
+                </div>
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button onClick={onCancel} style={{
+                    padding: "11px 18px", borderRadius: 2, border: "1px solid var(--border)",
+                    background: "transparent", color: "var(--muted)", fontSize: 12,
+                    fontFamily: "var(--mono)", letterSpacing: 2, cursor: "pointer",
+                  }}>CANCEL</button>
+                  <button onClick={() => onSave(form)} style={{
+                    padding: "11px 22px", borderRadius: 2, border: "none",
+                    background: "linear-gradient(135deg, var(--gold), var(--gold-light))",
+                    color: "#0d0c08", fontSize: 12, fontWeight: 600, cursor: "pointer",
+                    fontFamily: "var(--mono)", letterSpacing: 2,
+                  }}>{form.id ? "SAVE" : "ADD LISTING"}</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    /* ─── ADMIN LOGIN (FIXED — HARDCODED HASH) ─── */
+    function AdminLogin({ onLogin }) {
+      const [pass, setPass] = useState("");
+      const [error, setError] = useState(false);
+      const [checking, setChecking] = useState(false);
+
+      const handleLogin = async function() {
+        setChecking(true);
+        const hash = await sha256(pass);
+        if (hash === ADMIN_HASH) {
+          sessionStorage.setItem(ADMIN_KEY, "true");
+          onLogin();
+        } else {
+          setError(true);
+          setChecking(false);
+          setTimeout(function() { setError(false); }, 2000);
+        }
+      };
+
+      return (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 1000,
+          background: "rgba(0,0,0,0.85)", backdropFilter: "blur(12px)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <div style={{
+            background: "var(--bg)", borderRadius: 2, border: "1px solid var(--border)",
+            width: "100%", maxWidth: 400,
+            boxShadow: "0 32px 100px rgba(0,0,0,0.6), 0 0 0 1px rgba(201,162,39,0.1)",
+          }}>
+            <div style={{ height: 3, background: "linear-gradient(90deg, transparent, var(--gold), var(--gold-light), var(--gold), transparent)" }} />
+            <div style={{ padding: "40px 32px", textAlign: "center" }}>
+              <div style={{
+                width: 56, height: 56, borderRadius: 2, margin: "0 auto 20px",
+                border: "1px solid var(--gold-dim)", background: "rgba(201,162,39,0.04)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 20, fontFamily: "var(--mono)", color: "var(--gold)",
+              }}>&#9672;</div>
+              <div style={{ fontSize: 10, fontFamily: "var(--mono)", letterSpacing: 4, color: "var(--gold-dim)", marginBottom: 6 }}>
+                CLASSIFIED ACCESS
+              </div>
+              <h2 style={{ margin: "0 0 24px", fontSize: 22, fontWeight: 400, fontFamily: "var(--display)", color: "var(--fg)" }}>
+                Authentication Required
+              </h2>
+              <input
+                type="password" value={pass} onChange={function(e) { setPass(e.target.value); }}
+                onKeyDown={function(e) { if (e.key === "Enter") handleLogin(); }}
+                placeholder="Enter password"
+                style={{
+                  width: "100%", padding: "13px 16px", borderRadius: 2,
+                  border: "1px solid " + (error ? "#ef4444" : "var(--border)"),
+                  background: "var(--input-bg)", color: "var(--fg)", fontSize: 15,
+                  fontFamily: "var(--mono)", outline: "none", boxSizing: "border-box",
+                  marginBottom: 16, textAlign: "center", letterSpacing: 4,
+                }}
+              />
+              {error && <p style={{ color: "#ef4444", fontSize: 12, margin: "0 0 12px", fontFamily: "var(--mono)", letterSpacing: 1 }}>ACCESS DENIED</p>}
+              <button onClick={handleLogin} disabled={checking} style={{
+                width: "100%", padding: "13px", borderRadius: 2, border: "none",
+                background: "linear-gradient(135deg, var(--gold), var(--gold-light))",
+                color: "#0d0c08", fontSize: 13, fontWeight: 600, cursor: checking ? "wait" : "pointer",
+                fontFamily: "var(--mono)", letterSpacing: 2,
+                opacity: checking ? 0.7 : 1,
+              }}>AUTHENTICATE</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    /* ─── MAIN APP ─── */
+    function SukupListings() {
+      const [data, setData] = useState(function() { return loadData(); });
+      const [editing, setEditing] = useState(null);
+      const [view, setView] = useState("public");
+      const [filter, setFilter] = useState("all");
+      const [isAdmin, setIsAdmin] = useState(false);
+      const [showLogin, setShowLogin] = useState(false);
+
+      const listings = data.listings;
+      const nextId = data.nextId;
+
+      useEffect(function() {
+        if (sessionStorage.getItem(ADMIN_KEY) === "true") setIsAdmin(true);
+      }, []);
+
+      const handleAdminLogin = function() {
+        setIsAdmin(true);
+        setShowLogin(false);
+        setView("manage");
+        sessionStorage.setItem(ADMIN_KEY, "true");
+      };
+
+      const handleSave = function(form) {
+        let newListings, newNext = nextId;
+        if (form.id) {
+          newListings = listings.map(function(l) { return l.id === form.id ? form : l; });
+        } else {
+          newListings = [...listings, { ...form, id: nextId }];
+          newNext = nextId + 1;
+        }
+        const newData = { listings: newListings, nextId: newNext };
+        setData(newData);
+        setEditing(null);
+        saveData(newData);
+      };
+
+      const handleDelete = function(id) {
+        const newData = { listings: listings.filter(function(l) { return l.id !== id; }), nextId: nextId };
+        setData(newData);
+        setEditing(null);
+        saveData(newData);
+      };
+
+      const filtered = filter === "all" ? listings : listings.filter(function(l) { return l.status === filter; });
+      const publicListings = listings.filter(function(l) { return l.status === "available" || l.status === "pending"; });
+
+      const totalInvested = listings.reduce(function(s, l) { return s + (Number(l.purchasePrice) || 0); }, 0);
+      const totalAsking = listings.filter(function(l) { return l.status !== "sold"; }).reduce(function(s, l) { return s + (Number(l.askingPrice) || 0); }, 0);
+      const soldProfit = listings.filter(function(l) { return l.status === "sold"; }).reduce(function(s, l) { return s + ((Number(l.askingPrice) || 0) - (Number(l.purchasePrice) || 0)); }, 0);
+
+      return (
+        <div style={{
+          "--bg": "#0d0c08", "--card": "#141310", "--input-bg": "#1a1914",
+          "--fg": "#e8e4d9", "--muted": "#7a7564", "--border": "#2a2720",
+          "--gold": "#c9a227", "--gold-light": "#e8c84a", "--gold-dim": "#8b7a3a",
+          "--display": "'Playfair Display', Georgia, serif",
+          "--body": "'Cormorant Garamond', Georgia, serif",
+          "--mono": "'JetBrains Mono', 'IBM Plex Mono', monospace",
+          fontFamily: "var(--body)", background: "var(--bg)", color: "var(--fg)", minHeight: "100vh",
+        }}>
+          <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Cormorant+Garamond:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+          <style>{`
+            *, *::before, *::after { box-sizing: border-box; }
+            body { margin: 0; background: #0d0c08; }
+            ::selection { background: rgba(201,162,39,0.3); color: #e8e4d9; }
+            input:focus, select:focus, textarea:focus { border-color: #c9a227 !important; }
+            @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+          `}</style>
+
+          {showLogin && <AdminLogin onLogin={handleAdminLogin} />}
+          {editing && isAdmin && (
+            <ListingForm
+              listing={editing === "new" ? EMPTY_LISTING : editing}
+              onSave={handleSave}
+              onCancel={function() { setEditing(null); }}
+              onDelete={handleDelete}
+            />
+          )}
+
+          {/* Top bar */}
+          <div style={{
+            borderBottom: "1px solid var(--border)", padding: "14px 32px",
+            display: "flex", justifyContent: "space-between", alignItems: "center",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ fontSize: 13, fontFamily: "var(--mono)", letterSpacing: 4, color: "var(--gold)" }}>
+                SUKUP LAND
+              </span>
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {isAdmin && (
+                <>
+                  <button onClick={function() { setView("public"); setFilter("all"); }} style={{
+                    padding: "6px 14px", borderRadius: 1, border: "1px solid " + (view === "public" ? "var(--gold)" : "var(--border)"),
+                    background: view === "public" ? "rgba(201,162,39,0.08)" : "transparent",
+                    color: view === "public" ? "var(--gold)" : "var(--muted)",
+                    fontSize: 11, fontFamily: "var(--mono)", letterSpacing: 2, cursor: "pointer",
+                  }}>PUBLIC</button>
+                  <button onClick={function() { setView("manage"); }} style={{
+                    padding: "6px 14px", borderRadius: 1, border: "1px solid " + (view === "manage" ? "var(--gold)" : "var(--border)"),
+                    background: view === "manage" ? "rgba(201,162,39,0.08)" : "transparent",
+                    color: view === "manage" ? "var(--gold)" : "var(--muted)",
+                    fontSize: 11, fontFamily: "var(--mono)", letterSpacing: 2, cursor: "pointer",
+                  }}>MANAGE</button>
+                </>
+              )}
+              {!isAdmin && (
+                <button onClick={function() { setShowLogin(true); }} style={{
+                  padding: "6px 14px", borderRadius: 1, border: "1px solid var(--border)",
+                  background: "transparent", color: "var(--gold-dim)",
+                  fontSize: 11, fontFamily: "var(--mono)", letterSpacing: 2, cursor: "pointer",
+                }}>&#9672; ADMIN</button>
+              )}
+            </div>
+          </div>
+
+          {/* Hero section — PUBLIC */}
+          {view === "public" && (
+            <div style={{ textAlign: "center", padding: "60px 32px 40px" }}>
+              <div style={{ fontSize: 10, fontFamily: "var(--mono)", letterSpacing: 6, color: "var(--gold-dim)", marginBottom: 16 }}>
+                SUKUP CAPITAL PARTNERS, LLC
+              </div>
+              <h1 style={{ margin: "0 0 16px", fontSize: 42, fontWeight: 400, fontFamily: "var(--display)", color: "var(--fg)", lineHeight: 1.2 }}>
+                Private Land Holdings
+              </h1>
+              <GoldDivider style={{ maxWidth: 200, margin: "0 auto 16px" }} />
+              <p style={{
+                margin: "0 auto 20px", fontSize: 15, fontStyle: "italic",
+                color: "var(--gold)", fontFamily: "var(--body)",
+                maxWidth: 480, lineHeight: 1.7, letterSpacing: 0.3, opacity: 0.85,
+              }}>
+                "The wise young man or wage earner of today invests his money in real estate."
+              </p>
+              <span style={{
+                fontSize: 11, fontFamily: "var(--mono)", letterSpacing: 3,
+                color: "var(--gold-dim)", textTransform: "uppercase",
+              }}>— Andrew Carnegie</span>
+              <div style={{ marginTop: 20 }} />
+              <p style={{
+                margin: "0 auto", fontSize: 16, color: "var(--muted)",
+                maxWidth: 520, lineHeight: 1.7, fontFamily: "var(--body)",
+              }}>
+                Exclusive opportunities in vacant land. Cash purchases and flexible owner financing available on every parcel.
+              </p>
+            </div>
+          )}
+
+          {/* Manage header — ADMIN */}
+          {view === "manage" && isAdmin && (
+            <div style={{ padding: "32px 32px 0" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
+                <div>
+                  <h2 style={{ margin: "0 0 8px", fontSize: 28, fontWeight: 400, fontFamily: "var(--display)", color: "var(--fg)" }}>Portfolio</h2>
+                  <p style={{ margin: 0, fontSize: 13, color: "var(--muted)", fontFamily: "var(--mono)", letterSpacing: 1 }}>
+                    {listings.length} {listings.length === 1 ? "property" : "properties"}
+                  </p>
+                </div>
+                <button onClick={function() { setEditing("new"); }} style={{
+                  padding: "10px 20px", borderRadius: 2, border: "none",
+                  background: "linear-gradient(135deg, var(--gold), var(--gold-light))",
+                  color: "#0d0c08", fontSize: 12, fontWeight: 600, cursor: "pointer",
+                  fontFamily: "var(--mono)", letterSpacing: 2,
+                }}>+ NEW LISTING</button>
+              </div>
+
+              {/* Stats bar */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 24 }}>
+                {[
+                  { label: "Capital Deployed", value: "$" + fmt(totalInvested), color: "var(--fg)" },
+                  { label: "Portfolio Value", value: "$" + fmt(totalAsking), color: "var(--gold)" },
+                  { label: "Realized Profit", value: (soldProfit >= 0 ? "+" : "") + "$" + fmt(soldProfit), color: soldProfit >= 0 ? "#3dd68c" : "#f0997b" },
+                ].map(function(s) {
+                  return (
+                    <div key={s.label} style={{ padding: "14px 16px", borderRadius: 2, border: "1px solid var(--border)", background: "var(--card)" }}>
+                      <div style={{ fontSize: 10, fontFamily: "var(--mono)", letterSpacing: 2, color: "var(--muted)", marginBottom: 6 }}>{s.label.toUpperCase()}</div>
+                      <div style={{ fontSize: 22, fontWeight: 600, fontFamily: "var(--mono)", color: s.color }}>{s.value}</div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Filter tabs */}
+              <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
+                {[{ id: "all", label: "All" }, ...Object.entries(STATUS_MAP).map(function([k, v]) { return { id: k, label: v.label }; })].map(function(f) {
+                  return (
+                    <button key={f.id} onClick={function() { setFilter(f.id); }} style={{
+                      padding: "5px 12px", borderRadius: 1, fontSize: 11, fontFamily: "var(--mono)", letterSpacing: 2,
+                      border: "1px solid " + (filter === f.id ? "var(--gold)" : "var(--border)"),
+                      background: filter === f.id ? "rgba(201,162,39,0.08)" : "transparent",
+                      color: filter === f.id ? "var(--gold)" : "var(--muted)", cursor: "pointer",
+                    }}>{f.label.toUpperCase()}</button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Listings grid */}
+          <div style={{ padding: "0 32px 40px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 16 }}>
+              {(view === "public" ? publicListings : filtered).map(function(l) {
+                return (
+                  <ListingCard
+                    key={l.id}
+                    listing={l}
+                    isPublic={view === "public"}
+                    onEdit={view === "manage" ? function(listing) { setEditing(listing); } : null}
+                  />
+                );
+              })}
+            </div>
+            {(view === "public" ? publicListings : filtered).length === 0 && (
+              <div style={{ textAlign: "center", padding: "60px 20px" }}>
+                <div style={{ fontSize: 11, fontFamily: "var(--mono)", letterSpacing: 4, color: "var(--gold-dim)", marginBottom: 12 }}>
+                  {view === "public" ? "COMING SOON" : "NO LISTINGS"}
+                </div>
+                <h3 style={{ margin: "0 0 12px", fontSize: 22, fontWeight: 400, fontFamily: "var(--display)", color: "var(--fg)" }}>
+                  {view === "public" ? "New parcels arriving shortly" : "Add your first property"}
+                </h3>
+                <GoldDivider style={{ maxWidth: 120, margin: "0 auto 14px" }} />
+                <p style={{ margin: "0 0 4px", fontSize: 14, color: "var(--muted)", fontFamily: "var(--body)" }}>
+                  Sukup Capital Partners, LLC
+                </p>
+                <p style={{ margin: 0, fontSize: 13, color: "var(--gold)", fontFamily: "var(--mono)", letterSpacing: 1 }}>
+                  Contact us to discuss available parcels
+                </p>
+                <p style={{ margin: "6px 0 0", fontSize: 15, fontFamily: "var(--mono)" }}>
+                  <a href="tel:+15312139810" style={{ color: "#ef4444", textDecoration: "none", letterSpacing: 1 }}>(531) 213-9810</a>
+                </p>
+              </div>
+            )}
+          </div>
+
+          <footer style={{
+            borderTop: "1px solid var(--border)", padding: "24px 32px",
+            display: "flex", justifyContent: "space-between", alignItems: "center",
+          }}>
+            <div style={{ fontSize: 11, color: "var(--muted)", fontFamily: "var(--mono)", letterSpacing: 1 }}>
+              © {new Date().getFullYear()} Sukup Capital Partners, LLC
+            </div>
+            <div style={{ fontSize: 10, color: "var(--gold-dim)", fontFamily: "var(--mono)", letterSpacing: 3 }}>
+              SUKUPLAND.COM
+            </div>
+          </footer>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(
+      React.createElement(SukupListings)
+    );
+  </script>
+</body>
+</html>
